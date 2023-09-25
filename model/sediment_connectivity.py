@@ -4,7 +4,7 @@ import rasterio
 import numpy as np
 from rasterstats import zonal_stats
 
-from utils.run_subprocess import run_subprocess
+from utils.delineate_basin import delinate_catchment
 
 
 def hillslope_connectivity(network_raster, filled_dem, flow_acc, flow_dir, slope, weight):
@@ -55,7 +55,7 @@ def hillslope_connectivity(network_raster, filled_dem, flow_acc, flow_dir, slope
             if network_arr[row, col] != network_nd:
                 continue
             # delineate basin upstream of cell
-            basin = delineate_basin()
+            basin = delinate_catchment(flow_dir, [row, col])
             # find average weight and slope within the basin
             w_ave_zs = zonal_stats(basin, weight, stats='mean')
             w_ave = w_ave_zs[0].get('mean')
