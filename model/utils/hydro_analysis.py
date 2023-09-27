@@ -16,10 +16,10 @@ def wats_hydro(dem):
         raise Exception('TauDEM flow directions failed')
 
     flow_acc = os.path.join(os.path.dirname(dem), 'flow_acc.tif')
-    flow_acc_status = run_subprocess(os.path.dirname(dem), ["mpiexec", "-n", "2", "aread8", "-p", flow_dir, "-ad8", flow_acc])
+    flow_acc_status = run_subprocess(os.path.dirname(dem), ["mpiexec", "-n", "2", "aread8", "-p", flow_dir, "-ad8", flow_acc, "-nc"])
     if flow_acc_status != 0 or not os.path.isfile(flow_acc):
         raise Exception('TauDEM flow accumulation failed')
 
 
-# dem_in = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/Blodgett_DEM_2m_sub.tif'
-# wats_hydro(dem_in)
+dem_in = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/Blodgett_DEM_2m_sub.tif'
+wats_hydro(dem_in)
