@@ -4,6 +4,7 @@ import time
 from tqdm import tqdm
 import rasterio
 import numpy as np
+import geopandas as gpd
 from dsp_transport.calculate_transport import transport
 
 from numba import jit
@@ -133,7 +134,7 @@ def hillslope_connectivity(network_raster, filled_dem, flow_acc, flow_dir, slope
 
             if d_down is not None:
                 conn_vals[streamid].append(np.log10(d_up/d_down))
-                ic_array[row, col] = np.log10(d_up/d_down)
+                ic_array[row, col] = np.log10(d_up/d_down)  # getting -inf values that I need to fix...
 
     hs_connectivity = {id: np.average(vals) for id, vals in conn_vals.items()}
 
@@ -143,15 +144,36 @@ def hillslope_connectivity(network_raster, filled_dem, flow_acc, flow_dir, slope
     return hs_connectivity
 
 
-def channel_connectivity(reaches, gsds):
+def channel_connectivity(reaches, gsds, id_field, upstream_id, discharge, flow_scale_field, depth_hydro_geom, width_hydr_geom):
 
-    # reaches must have topological identifiers from network tools
+    # reaches must have topological identifiers from network tools that match keys in the gsd dict
+    # reaches must also be prepared with slope and upstream-downstream topology fields, width?
+    sed_yield = {}
 
     # open the gsd json as a dict
     with open(gsds) as gsdfile:
         gsd = json.load(gsdfile)
 
-    
+    network = gpd.read_file(reaches)
+
+    for i in network.index:
+        reach_id = network.loc[i, id_field]
+        q = discharge * network.loc[i, flow_scale_field]
+        depth = depth_hydro_geom[0] * q ** depth_hydro_geom[1]
+        width = width_hydr_geom[0] * q ** width_hydr_geom[1]
+        fractions = {key: val['fraction'] for key, val in gsd[reach_id]['fractions'].items()}
+        qs = transport(fractions, network.loc[i, 'Slope'], discharge*network.loc[i, flow_scale_field], depth, width, 900)
+        qs_kg = {key: val[1] for key, val in qs.items()}
+
+        sed_yield[reach_id] = qs_kg
+
+    sdr = {}
+    for i in network.index:
+        qs_in = sed_yield[network.loc[i, upstream_id]]
+        qs_out = sed_yield[network.loc[i, id_field]]
+        sdr[network.loc[i, id_field]] = qs_in / qs_out
+
+    return sdr
 
 
 nr = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/conn_test/raster_network_id.tif'
