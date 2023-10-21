@@ -1,5 +1,6 @@
 import json
 import os
+from math import pi
 import time
 from tqdm import tqdm
 import rasterio
@@ -14,26 +15,28 @@ from utils.delineate_basin import delineate_catchment
 
 
 @jit(nopython=True)
-def basin_raster_mean(basin, raster_array):
+def basin_raster_mean(basin, raster_array, res_x, res_y):
     numcells = basin.sum()
-    print(f'basin covers {numcells} cells')
+    # print(f'basin covers {numcells} cells')
     vals = []
     for row in range(raster_array.shape[0]):
         for col in range(raster_array.shape[1]):
             if basin[row, col] == 1:
                 vals.append(raster_array[row, col])
-    return sum(vals) / numcells
+    return sum(vals) / numcells, numcells * res_x * res_y
 
 
 @jit(nopython=True)
-def find_d_up(row, col, weight_array, slope_array, fa_array, xres, yres, basin=None):
+def find_d_up(row, col, weight_array, slope_array, xres, yres, basin=None):
     if basin is None:
-        d_up = weight_array[row, col] * slope_array[row, col] * np.sqrt(fa_array[row, col]* xres * yres)
+        slopeval = max(0.005, slope_array[row, col])
+        slopeval = min(1., slopeval)
+        d_up = weight_array[row, col] * slopeval * np.sqrt(xres * yres)
     else:
-        w_ave = basin_raster_mean(basin, weight_array)
-        s_ave = basin_raster_mean(basin, slope_array)
+        w_ave, area = basin_raster_mean(basin, weight_array, xres, yres)
+        s_ave, area = basin_raster_mean(basin, slope_array, xres, yres)
 
-        d_up = w_ave * s_ave * np.sqrt(fa_array[row, col] * xres * yres)
+        d_up = w_ave * s_ave * np.sqrt(area)
 
     return d_up
 
@@ -56,15 +59,89 @@ def find_d_down(row, col, directions, fd_array, fd_nd, network_arr, network_nd, 
         next = directions[fd_array[nrow, ncol]]
         nrow, ncol, dist = nrow + int(next[0][0]), ncol + int(next[0][1]), next[1][0]
 
-    if outbounds is False and len(d_down_vals) > 0:
+    if outbounds is False and sum(d_down_vals) > 0:
 
-        print(f'cells downstream {len(d_down_vals)}')
+        # print(f'cells downstream {len(d_down_vals)}')
         streamid = network_arr[nrow, ncol]
         d_down = sum(d_down_vals)
 
         return streamid, d_down
     else:
         return None, None
+
+
+@jit(nopython=True)
+def d8_flowdir(dinf_flow_dir, ndval):
+
+    # create d8 flow dir for algorithm
+    d8_array = np.zeros(dinf_flow_dir.shape, dtype=np.int64)
+    for row in range(dinf_flow_dir.shape[0]):
+        for col in range(dinf_flow_dir.shape[1]):
+            if dinf_flow_dir[row, col] == ndval:
+                continue
+            else:
+                if 15*pi/8 <= dinf_flow_dir[row, col] < pi/8:
+                    d8_array[row, col] = 1
+                elif pi/8 <= dinf_flow_dir[row, col] < 3*pi/8:
+                    d8_array[row, col] = 2
+                elif 3*pi/8 <= dinf_flow_dir[row, col] < 5*pi/8:
+                    d8_array[row, col] = 3
+                elif 5*pi/8 <= dinf_flow_dir[row, col] < 7*pi/8:
+                    d8_array[row, col] = 4
+                elif 7*pi/8 <= dinf_flow_dir[row, col] < 9*pi/8:
+                    d8_array[row, col] = 5
+                elif 9*pi/8 <= dinf_flow_dir[row, col] < 11*pi/8:
+                    d8_array[row, col] = 6
+                elif 11*pi/8 <= dinf_flow_dir[row, col] < 13*pi/8:
+                    d8_array[row, col] = 7
+                else:
+                    d8_array[row, col] = 8
+
+    return d8_array
+
+
+def upstream_basin(pour_point, fd_array):
+    def find_new_cells(point, fd_array):
+        new_cells = []
+        row, col = point[0], point[1]
+        if fd_array[row, col + 1] == 5:
+            new_cells.append([row, col + 1])
+        if fd_array[row - 1, col + 1] == 6:
+            new_cells.append([row - 1, col + 1])
+        if fd_array[row - 1, col] == 7:
+            new_cells.append([row - 1, col])
+        if fd_array[row - 1, col - 1] == 8:
+            new_cells.append([row - 1, col - 1])
+        if fd_array[row, col - 1] == 1:
+            new_cells.append([row, col - 1])
+        if fd_array[row + 1, col - 1] == 2:
+            new_cells.append([row + 1, col - 1])
+        if fd_array[row + 1, col] == 3:
+            new_cells.append([row + 1, col])
+        if fd_array[row + 1, col + 1] == 4:
+            new_cells.append([row + 1, col + 1])
+
+        return new_cells
+
+    out_array = np.zeros(fd_array.shape, dtype=np.int32)
+
+    row, col = pour_point[0], pour_point[1]
+    # set the pour point as part of the basin
+    out_array[row, col] = 1
+
+    new_cells = find_new_cells(pour_point, fd_array)
+    while len(new_cells) > 0:
+        for cell in new_cells:
+            if out_array[cell[0], cell[1]] != 1:
+                out_array[cell[0], cell[1]] = 1
+                new_cells2 = find_new_cells(cell, fd_array)
+                if len(new_cells2) >= 2:
+                    print('checking')
+                new_cells.remove(cell)
+                for nc in new_cells2:
+                    new_cells.append(nc)
+
+    return out_array
 
 
 def hillslope_connectivity(network_raster, filled_dem, flow_acc, flow_dir, slope, weight):
@@ -100,6 +177,12 @@ def hillslope_connectivity(network_raster, filled_dem, flow_acc, flow_dir, slope
 
         ic_array = np.full(dem_array.shape, dem_nd)
 
+    fd_array = d8_flowdir(fd_array, fd_nd)
+    with rasterio.open(os.path.join(os.path.dirname(filled_dem), 'd8.tif'), 'w', **meta) as dst:
+        dst.write(fd_array, 1)
+
+    basintest = upstream_basin([2289, 926], fd_array)
+
     directions = {
         1: np.array([[0, 1], [xres, 1]]),
         2: np.array([[-1, 1], [xres * 2 ** 0.5, 1]]),
@@ -121,18 +204,16 @@ def hillslope_connectivity(network_raster, filled_dem, flow_acc, flow_dir, slope
             if fa_array[row, col] < 1:
                 continue
             if fa_array[row, col] == 1:
-                d_up = find_d_up(row, col, weight_array, slope_array, fa_array, xres, yres)
+                d_up = find_d_up(row, col, weight_array, slope_array, xres, yres)
             else:
-                basin = delineate_catchment(flow_dir, [row, col])
-                d_up = find_d_up(row, col, weight_array, slope_array, fa_array, xres, yres, basin)
+                basin = upstream_basin([row, col], fd_array)
+                # basin = delineate_catchment(flow_dir, [row, col])
+                d_up = find_d_up(row, col, weight_array, slope_array, xres, yres, basin)
 
-            streamid, d_down = find_d_down(row, col, d, fd_array, fd_nd, network_arr, network_nd,
+            streamid, d_down = find_d_down(row, col, d, fd_array, 0, network_arr, network_nd,
                                            slope_array, weight_array)
-            if streamid is not None:
-                if int(streamid) != 1:
-                    print('checking')
 
-            if d_down is not None:
+            if d_down not in [None, 0, 0.0] and d_up not in [None, 0, 0.0]:
                 conn_vals[streamid].append(np.log10(d_up/d_down))
                 ic_array[row, col] = np.log10(d_up/d_down)  # getting -inf values that I need to fix...
 
@@ -165,7 +246,7 @@ def channel_connectivity(reaches, gsds, id_field, upstream_id, discharge, flow_s
         qs = transport(fractions, network.loc[i, 'Slope'], discharge*network.loc[i, flow_scale_field], depth, width, 900)
         qs_kg = {key: val[1] for key, val in qs.items()}
 
-        sed_yield[reach_id] = qs_kg
+        sed_yield[reach_id] = sum(qs_kg.values())
 
     sdr = {}
     for i in network.index:
@@ -176,11 +257,12 @@ def channel_connectivity(reaches, gsds, id_field, upstream_id, discharge, flow_s
     return sdr
 
 
-nr = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/conn_test/raster_network_id.tif'
-filled = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/conn_test/pitfill.tif'
-fa = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/conn_test/flow_acc.tif'
-fd = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/conn_test/flow_dir.tif'
-sl = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/conn_test/slope.tif'
-we = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/conn_test/topo_weight.tif'
+nr = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_upper/network.tif'
+filled = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_upper/pitfill.tif'
+fa = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_upper/flow_acc.tif'
+fd = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_upper/flow_dir.tif'
+sl = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_upper/slope.tif'
+we = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_upper/topo_weight.tif'
 
-hillslope_connectivity(nr, filled, fa, fd, sl, we)
+hc = hillslope_connectivity(nr, filled, fa, fd, sl, we)
+print(hc)
