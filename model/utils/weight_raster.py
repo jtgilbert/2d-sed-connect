@@ -23,11 +23,11 @@ def weight_raster(dem):
     resid_topog = None
     weight = 1 - (ri / ri_max)
 
-    with rasterio.open(os.path.join(os.path.dirname(dem), 'topo_weight_test.tif'), 'w', **meta) as dst:
+    with rasterio.open(os.path.join(os.path.dirname(dem), 'topo_weight.tif'), 'w', **meta) as dst:
         dst.write(weight, 1)
 
     return weight
 
 
-dem_in = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/conn_test/pitfill.tif'
+dem_in = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/dem.tif'
 weight_raster(dem_in)
