@@ -12,6 +12,7 @@ from numba import jit
 from numba.typed import Dict
 
 from utils.delineate_basin import delineate_catchment
+from utils.upstream_basin import upstream_basin
 
 
 @jit(nopython=True)
@@ -100,48 +101,46 @@ def d8_flowdir(dinf_flow_dir, ndval):
     return d8_array
 
 
-def upstream_basin(pour_point, fd_array):
-    def find_new_cells(point, fd_array):
-        new_cells = []
-        row, col = point[0], point[1]
-        if fd_array[row, col + 1] == 5:
-            new_cells.append([row, col + 1])
-        if fd_array[row - 1, col + 1] == 6:
-            new_cells.append([row - 1, col + 1])
-        if fd_array[row - 1, col] == 7:
-            new_cells.append([row - 1, col])
-        if fd_array[row - 1, col - 1] == 8:
-            new_cells.append([row - 1, col - 1])
-        if fd_array[row, col - 1] == 1:
-            new_cells.append([row, col - 1])
-        if fd_array[row + 1, col - 1] == 2:
-            new_cells.append([row + 1, col - 1])
-        if fd_array[row + 1, col] == 3:
-            new_cells.append([row + 1, col])
-        if fd_array[row + 1, col + 1] == 4:
-            new_cells.append([row + 1, col + 1])
-
-        return new_cells
-
-    out_array = np.zeros(fd_array.shape, dtype=np.int32)
-
-    row, col = pour_point[0], pour_point[1]
-    # set the pour point as part of the basin
-    out_array[row, col] = 1
-
-    new_cells = find_new_cells(pour_point, fd_array)
-    while len(new_cells) > 0:
-        for cell in new_cells:
-            if out_array[cell[0], cell[1]] != 1:
-                out_array[cell[0], cell[1]] = 1
-                new_cells2 = find_new_cells(cell, fd_array)
-                if len(new_cells2) >= 2:
-                    print('checking')
-                new_cells.remove(cell)
-                for nc in new_cells2:
-                    new_cells.append(nc)
-
-    return out_array
+# def upstream_basin(pour_point, fd_array):
+#     def find_new_cells(point, fd_array):
+#         new_cells = []
+#         row, col = point[0], point[1]
+#         if fd_array[row, col + 1] == 5:
+#             new_cells.append([row, col + 1])
+#         if fd_array[row - 1, col + 1] == 6:
+#             new_cells.append([row - 1, col + 1])
+#         if fd_array[row - 1, col] == 7:
+#             new_cells.append([row - 1, col])
+#         if fd_array[row - 1, col - 1] == 8:
+#             new_cells.append([row - 1, col - 1])
+#         if fd_array[row, col - 1] == 1:
+#             new_cells.append([row, col - 1])
+#         if fd_array[row + 1, col - 1] == 2:
+#             new_cells.append([row + 1, col - 1])
+#         if fd_array[row + 1, col] == 3:
+#             new_cells.append([row + 1, col])
+#         if fd_array[row + 1, col + 1] == 4:
+#             new_cells.append([row + 1, col + 1])
+#
+#         return new_cells
+#
+#     out_array = np.zeros(fd_array.shape, dtype=np.int32)
+#
+#     row, col = pour_point[0], pour_point[1]
+#     # set the pour point as part of the basin
+#     out_array[row, col] = 1
+#
+#     new_cells = find_new_cells(pour_point, fd_array)
+#     while len(new_cells) > 0:
+#         for cell in new_cells:
+#             if out_array[cell[0], cell[1]] != 1:
+#                 out_array[cell[0], cell[1]] = 1
+#                 new_cells2 = find_new_cells(cell, fd_array)
+#                 new_cells.remove(cell)
+#                 for nc in new_cells2:
+#                     new_cells.append(nc)
+#
+#     return out_array
 
 
 def hillslope_connectivity(network_raster, filled_dem, flow_acc, flow_dir, slope, weight):
@@ -181,7 +180,7 @@ def hillslope_connectivity(network_raster, filled_dem, flow_acc, flow_dir, slope
     with rasterio.open(os.path.join(os.path.dirname(filled_dem), 'd8.tif'), 'w', **meta) as dst:
         dst.write(fd_array, 1)
 
-    basintest = upstream_basin([2289, 926], fd_array)
+    # basintest = upstream_basin([2289, 926], fd_array)
 
     directions = {
         1: np.array([[0, 1], [xres, 1]]),
@@ -206,7 +205,10 @@ def hillslope_connectivity(network_raster, filled_dem, flow_acc, flow_dir, slope
             if fa_array[row, col] == 1:
                 d_up = find_d_up(row, col, weight_array, slope_array, xres, yres)
             else:
-                basin = upstream_basin([row, col], fd_array)
+                # print(f'finding basin for cell {row}, {col}')
+                st = time.time()
+                basin = upstream_basin([row, col], np.asarray(fd_array, dtype=np.int64))
+                # print(f'basin time: {time.time() - st}')
                 # basin = delineate_catchment(flow_dir, [row, col])
                 d_up = find_d_up(row, col, weight_array, slope_array, xres, yres, basin)
 
@@ -257,12 +259,12 @@ def channel_connectivity(reaches, gsds, id_field, upstream_id, discharge, flow_s
     return sdr
 
 
-nr = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_upper/network.tif'
-filled = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_upper/pitfill.tif'
-fa = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_upper/flow_acc.tif'
-fd = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_upper/flow_dir.tif'
-sl = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_upper/slope.tif'
-we = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_upper/topo_weight.tif'
+nr = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/network.tif'
+filled = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/pitfill.tif'
+fa = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/flow_acc.tif'
+fd = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/flow_dir.tif'
+sl = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/slope.tif'
+we = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/topo_weight.tif'
 
 hc = hillslope_connectivity(nr, filled, fa, fd, sl, we)
 print(hc)
