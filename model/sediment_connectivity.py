@@ -5,6 +5,7 @@ import time
 from tqdm import tqdm
 import rasterio
 import numpy as np
+import pandas as pd
 import geopandas as gpd
 from dsp_transport.calculate_transport import transport
 
@@ -227,11 +228,11 @@ def hillslope_connectivity(network_raster, filled_dem, flow_acc, flow_dir, slope
     return hs_connectivity
 
 
-def channel_connectivity(reaches, gsds, id_field, upstream_id, discharge, flow_scale_field, depth_hydro_geom, width_hydr_geom):
+def channel_connectivity(reaches, gsds, id_field, reachids, upstream_id, hydrograph, q_interval, flow_scale_field, depth_hydro_geom, width_hydro_geom, min_fr = None, min_fr_us = None):
 
     # reaches must have topological identifiers from network tools that match keys in the gsd dict
     # reaches must also be prepared with slope and upstream-downstream topology fields, width?
-    sed_yield = {}
+    sdr = {}
 
     # open the gsd json as a dict
     with open(gsds) as gsdfile:
@@ -239,32 +240,295 @@ def channel_connectivity(reaches, gsds, id_field, upstream_id, discharge, flow_s
 
     network = gpd.read_file(reaches)
 
+    hydr = pd.read_csv(hydrograph)
+    discharges = hydr['Q']
+
     for i in network.index:
         reach_id = network.loc[i, id_field]
-        q = discharge * network.loc[i, flow_scale_field]
-        depth = depth_hydro_geom[0] * q ** depth_hydro_geom[1]
-        width = width_hydr_geom[0] * q ** width_hydr_geom[1]
-        fractions = {key: val['fraction'] for key, val in gsd[reach_id]['fractions'].items()}
-        qs = transport(fractions, network.loc[i, 'Slope'], discharge*network.loc[i, flow_scale_field], depth, width, 900)
-        qs_kg = {key: val[1] for key, val in qs.items()}
+        if reach_id not in reachids:
+            continue
+        d50 = gsd[str(i)]['d50']/1000
+        d84 = gsd[str(i)]['d84']/1000
+        sedyield = 0
+        sedyield_us = 0
+        for discharge in tqdm(discharges):
+            us_reach_id = network.loc[i, upstream_id[0]]
+            us_reach_id2 = network.loc[i, upstream_id[1]]
+            q = discharge * network.loc[i, flow_scale_field]
+            depth = depth_hydro_geom[0] * q ** depth_hydro_geom[1]
+            width = width_hydro_geom[0] * q ** width_hydro_geom[1]
+            fractions_tmp = {float(key): val['fraction'] for key, val in gsd[str(i)]['fractions'].items()}
+            if min_fr is not None:
+                fractions = update_fracs(fractions_tmp, min_fr)
+            else:
+                fractions = fractions_tmp
+            qs = transport(fractions, network.loc[i, 'Slope'], q, depth, width, q_interval, d50_in=d50, d84_in=d84)
+            qs_kg = {key: val[1] for key, val in qs.items()}
+            print(q, sum(qs_kg.values()))
 
-        sed_yield[reach_id] = sum(qs_kg.values())
+            sedyield += sum(qs_kg.values())
 
-    sdr = {}
-    for i in network.index:
-        qs_in = sed_yield[network.loc[i, upstream_id]]
-        qs_out = sed_yield[network.loc[i, id_field]]
-        sdr[network.loc[i, id_field]] = qs_in / qs_out
+            if us_reach_id is not None:
+                for j in network.index:
+                    if network.loc[j, id_field] == us_reach_id:
+                        d50_us = gsd[str(j)]['d50']/1000
+                        d84_us = gsd[str(j)]['d84']/1000
+                        q_us = discharge * network.loc[j, flow_scale_field]
+                        depth_us = depth_hydro_geom[0] * q ** depth_hydro_geom[1]
+                        width_us = width_hydro_geom[0] * q ** width_hydro_geom[1]
+                        fractions_us_tmp = {float(key): val['fraction'] for key, val in gsd[str(j)]['fractions'].items()}
+                        if min_fr_us is not None:
+                            fractions_us = update_fracs(fractions_us_tmp, min_fr_us)
+                        else:
+                            fractions_us = fractions_us_tmp
+                        qs_us = transport(fractions_us, network.loc[j, 'Slope'], q_us, depth_us, width_us, q_interval, d50_in=d50_us, d84_in=d84_us)
+                        qs_kg_us = {key: val[1] for key, val in qs_us.items()}
+
+                        sedyield_us += sum(qs_kg_us.values())
+
+            if us_reach_id2 is not None:
+                for k in network.index:
+                    if network.loc[k, id_field] == us_reach_id2:
+                        d50_us2 = gsd[str(k)]['d50']/1000
+                        d84_us2 = gsd[str(k)]['d84']/1000
+                        q_us2 = discharge * network.loc[k, flow_scale_field]
+                        depth_us2 = depth_hydro_geom[0] * q ** depth_hydro_geom[1]
+                        width_us2 = width_hydro_geom[0] * q ** width_hydro_geom[1]
+                        fractions_us2_tmp = {float(key): val['fraction'] for key, val in gsd[str(k)]['fractions'].items()}
+                        if min_fr_us is not None:
+                            fractions_us2 = update_fracs(fractions_us2_tmp, min_fr_us)
+                        else:
+                            fractions_us2 = fractions_us2_tmp
+                        qs_us2 = transport(fractions_us2, network.loc[k, 'Slope'], q_us2, depth_us2, width_us2, q_interval, d50_in=d50_us2, d84_in=d84_us2)
+                        qs_kg_us2 = {key: val[1] for key, val in qs_us2.items()}
+
+                        sedyield_us += sum(qs_kg_us2.values())
+
+        if sedyield_us > 0:
+            print(reach_id, sedyield, sedyield_us)
+            sdr[reach_id] = sedyield / sedyield_us
+        else:
+            sdr[reach_id] = None
 
     return sdr
 
 
-nr = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/network.tif'
-filled = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/pitfill.tif'
-fa = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/flow_acc.tif'
-fd = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/flow_dir.tif'
-sl = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/slope.tif'
-we = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/topo_weight.tif'
+def network_sdr(reaches, gsds, id_field, upstream_id, discharge, q_interval, flow_scale_field, depth_hydro_geom, width_hydro_geom, min_fr=None, min_fr_us=None):
 
-hc = hillslope_connectivity(nr, filled, fa, fd, sl, we)
-print(hc)
+    # reaches must have topological identifiers from network tools that match keys in the gsd dict
+    # reaches must also be prepared with slope and upstream-downstream topology fields, width?
+
+    # open the gsd json as a dict
+    with open(gsds) as gsdfile:
+        gsd = json.load(gsdfile)
+
+    network = gpd.read_file(reaches)
+
+    for i in tqdm(network.index):
+
+        sedyield = 0
+        sedyield_us = 0
+
+        us_reach_id = network.loc[i, upstream_id[0]]
+        us_reach_id2 = network.loc[i, upstream_id[1]]
+        d50 = max(network.loc[i, 'D50']/1000, 0.001)
+        d84 = max(network.loc[i, 'D84']/1000, 0.004)
+        q = discharge * network.loc[i, flow_scale_field]
+        depth = depth_hydro_geom[0] * q ** depth_hydro_geom[1]
+        width = width_hydro_geom[0] * q ** width_hydro_geom[1]
+        fractions_tmp = {float(key): val['fraction'] for key, val in gsd[str(i)]['fractions'].items()}
+        if min_fr is not None:
+            fractions = update_fracs(fractions_tmp, min_fr)
+        else:
+            fractions = fractions_tmp
+        qs = transport(fractions, max(network.loc[i, 'Slope'], 0.0001), q, depth, width, q_interval, d50_in=d50, d84_in=d84)
+        qs_kg = {key: val[1] for key, val in qs.items()}
+        # print(q, sum(qs_kg.values()))
+
+        sedyield += sum(qs_kg.values())
+
+        if us_reach_id is not None:
+            for j in network.index:
+                if network.loc[j, id_field] == us_reach_id:
+                    d50_us = max(network.loc[j, 'D50']/1000, 0.001)
+                    d84_us = max(network.loc[j, 'D84']/1000, 0.004)
+                    q_us = discharge * network.loc[j, flow_scale_field]
+                    depth_us = depth_hydro_geom[0] * q ** depth_hydro_geom[1]
+                    width_us = width_hydro_geom[0] * q ** width_hydro_geom[1]
+                    fractions_us_tmp = {float(key): val['fraction'] for key, val in gsd[str(j)]['fractions'].items()}
+                    if min_fr_us is not None:
+                        fractions_us = update_fracs(fractions_us_tmp, min_fr_us)
+                    else:
+                        fractions_us = fractions_us_tmp
+                    qs_us = transport(fractions_us, max(network.loc[j, 'Slope'], 0.0001), q_us, depth_us, width_us, q_interval, d50_in=d50_us, d84_in=d84_us)
+                    qs_kg_us = {key: val[1] for key, val in qs_us.items()}
+
+                    sedyield_us += sum(qs_kg_us.values())
+
+        if us_reach_id2 is not None:
+            for k in network.index:
+                if network.loc[k, id_field] == us_reach_id2:
+                    d50_us2 = max(network.loc[k, 'D50']/1000, 0.001)
+                    d84_us2 = max(network.loc[k, 'D84']/1000, 0.004)
+                    q_us2 = discharge * network.loc[k, flow_scale_field]
+                    depth_us2 = depth_hydro_geom[0] * q ** depth_hydro_geom[1]
+                    width_us2 = width_hydro_geom[0] * q ** width_hydro_geom[1]
+                    fractions_us2_tmp = {float(key): val['fraction'] for key, val in gsd[str(k)]['fractions'].items()}
+                    if min_fr_us is not None:
+                        fractions_us2 = update_fracs(fractions_us2_tmp, min_fr_us)
+                    else:
+                        fractions_us2 = fractions_us2_tmp
+                    qs_us2 = transport(fractions_us2, max(network.loc[k, 'Slope'], 0.0001), q_us2, depth_us2, width_us2, q_interval, d50_in=d50_us2, d84_in=d84_us2)
+                    qs_kg_us2 = {key: val[1] for key, val in qs_us2.items()}
+
+                    sedyield_us += sum(qs_kg_us2.values())
+
+        if sedyield_us > 0:
+            sdr = sedyield / sedyield_us
+        else:
+            sdr = 1000000
+        if sdr > 0:
+            network.loc[i, 'SDR'] = np.log10(sdr)
+        else:
+            network.loc[i, 'SDR'] = np.log10(1e-6)
+
+    network.to_file(reaches)
+
+    return
+
+
+def update_fracs(fracs, min_frac):
+    to_remove = 0
+    remove_from = []
+
+    for phi, frac in fracs.items():
+        if phi >= -6 and frac < min_frac:
+            to_remove += min_frac - frac
+            fracs[phi] = min_frac
+
+    for phi, frac in fracs.items():
+        if frac > to_remove:
+            remove_from.append(phi)
+
+    for phi, frac in fracs.items():
+        if phi in remove_from:
+            fracs[phi] = frac - (to_remove / len(remove_from))
+
+    return fracs
+
+
+def recking_channel_connectivity(reaches, id_field, reachids, upstream_id, hydrograph, q_interval, flow_scale_field, width_hydro_geom):
+    sdr = {}
+
+    network = gpd.read_file(reaches)
+
+    hydr = pd.read_csv(hydrograph)
+    discharges = hydr['Q']
+
+    for i in network.index:
+        reach_id = network.loc[i, id_field]
+        if reach_id not in reachids:
+            continue
+        sedyield = 0
+        sedyield_us = 0
+        us_reach_id = network.loc[i, upstream_id[0]]
+        us_reach_id2 = network.loc[i, upstream_id[1]]
+        s = network.loc[i, 'Slope']
+        d50 = network.loc[i, 'D50'] / 1000
+        d84 = network.loc[i, 'D84'] / 1000
+        tau_star_m = (5*s + 0.06) * (d84/d50)**(4.4*s**0.5-1.5)
+        for discharge in tqdm(discharges):
+            flow = discharge * network.loc[i, flow_scale_field]
+            if flow > 5:
+                print('checking')
+            w = 9
+            q = flow / w
+            if q / np.sqrt(9.81*s*d84**3) < 100:
+                p = 0.23
+            else:
+                p = 0.3
+            tau_star_84 = s / (1.65 * d84 * ((2 / w) + (74 * p**2.6) * (9.81 * s)**p * q**(-2 * p) * d84**(3 * p - 1)))
+            tp = 14 * tau_star_84**2.5 / (1 + (tau_star_m / tau_star_84)**4)
+            qsv = np.sqrt(9.81*1.65*d84**3) * tp
+            Qs = w*2650*qsv
+            print(flow, Qs * q_interval)
+            sedyield += Qs * q_interval
+
+            if us_reach_id is not None:
+                for j in network.index:
+                    if network.loc[j, id_field] == us_reach_id:
+                        s = network.loc[j, 'Slope']
+                        d50 = network.loc[j, 'D50']
+                        d84 = network.loc[j, 'D84']
+                        tau_star_m = (5 * s + 0.06) * (d84 / d50) ** (4.4 * s ** 0.5 - 1.5)
+                        flow = discharge * network.loc[j, flow_scale_field]
+                        w = width_hydro_geom[0] * flow ** width_hydro_geom[1]
+                        q = flow / w
+                        if q / np.sqrt(9.81 * s * d84 ** 3) < 100:
+                            p = 0.23
+                        else:
+                            p = 0.3
+                        tau_star_84 = s / (1.65 * d84 * (
+                                    2 / w + 74 * p ** 2.6 * (9.81 * s) ** p * q ** (-2 * p) * d84 ** (3 * p - 1)))
+                        tp = 14 * tau_star_84 ** 2.5 / (1 + (tau_star_m / tau_star_84) ** 4)
+                        qsv = np.sqrt(9.81 * 1.65 * d84 ** 3) * tp
+                        Qs = w * 2650 * qsv
+                        sedyield_us += Qs * q_interval
+
+            if us_reach_id2 is not None:
+                for k in network.index:
+                    if network.loc[k, id_field] == us_reach_id:
+                        s = network.loc[k, 'Slope']
+                        d50 = network.loc[k, 'D50']
+                        d84 = network.loc[k, 'D84']
+                        tau_star_m = (5 * s + 0.06) * (d84 / d50) ** (4.4 * s ** 0.5 - 1.5)
+                        flow = discharge * network.loc[k, flow_scale_field]
+                        w = width_hydro_geom[0] * flow ** width_hydro_geom[1]
+                        q = flow / w
+                        if q / np.sqrt(9.81 * s * d84 ** 3) < 100:
+                            p = 0.23
+                        else:
+                            p = 0.3
+                        tau_star_84 = s / (1.65 * d84 * (
+                                    2 / w + 74 * p ** 2.6 * (9.81 * s) ** p * q ** (-2 * p) * d84 ** (3 * p - 1)))
+                        tp = 14 * tau_star_84 ** 2.5 / (1 + (tau_star_m / tau_star_84) ** 4)
+                        qsv = np.sqrt(9.81 * 1.65 * d84 ** 3) * tp
+                        Qs = w * 2650 * qsv
+                        sedyield_us += Qs * q_interval
+
+        if sedyield_us > 0:
+            print(reach_id, sedyield, sedyield_us)
+            sdr[reach_id] = sedyield / sedyield_us
+        else:
+            sdr[reach_id] = None
+
+    return sdr
+
+
+# nr = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/burnt_fork/connectivity/network.tif'
+# filled = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/burnt_fork/connectivity/pitfill.tif'
+# fa = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/burnt_fork/connectivity/flow_acc.tif'
+# fd = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/burnt_fork/connectivity/flow_dir.tif'
+# sl = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/burnt_fork/connectivity/slope.tif'
+# we = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/burnt_fork/connectivity/topo_weight.tif'
+#
+# hc = hillslope_connectivity(nr, filled, fa, fd, sl, we)
+# print(hc)
+
+reaches_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/Blodgett_network_100m.shp'
+gsds_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/gsd_blodgett.json'
+id_field_in = 'rid'
+reachids_in = [1.053]
+upstream_id_in = ['rid_us', 'rid_us2']
+discharge_in = '/media/jordan/Elements/Geoscience/Bitterroot/Woods/Woods_runoff.csv'
+flow_scale_field_in = 'flow_scale'
+dhg = [0.299, 0.215]
+whg = [6.504, 0.348]
+
+# sdr = channel_connectivity(reaches_in, gsds_in, id_field_in, reachids_in, upstream_id_in, discharge_in, 1800, flow_scale_field_in, dhg, whg)
+# print(sdr)
+
+# sdr = recking_channel_connectivity(reaches_in, id_field_in, reachids_in, upstream_id_in, discharge_in, 1800, flow_scale_field_in, whg)
+# print(sdr)
+
+network_sdr(reaches_in, gsds_in, id_field_in, upstream_id_in, 12, 900, flow_scale_field_in, dhg, whg, min_fr=0.005, min_fr_us=0.005)

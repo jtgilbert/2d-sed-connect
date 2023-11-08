@@ -47,6 +47,6 @@ def util_delineate_basin(flowdir, coord):
     return catch_arr
 
 
-fd_in = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/flow_dir_sub.tif'
-coord_in = [215865, 222438]
+fd_in = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/burnt_fork/flow_dir.tif'
+coord_in = [261848, 247916]
 util_delineate_basin(fd_in, coord_in)

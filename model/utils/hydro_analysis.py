@@ -21,5 +21,5 @@ def wats_hydro(dem):
         raise Exception('TauDEM flow accumulation failed')
 
 
-dem_in = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/dem.tif'
+dem_in = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/burnt_fork/connectivity/dem.tif'
 wats_hydro(dem_in)

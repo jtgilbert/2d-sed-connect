@@ -29,5 +29,5 @@ def weight_raster(dem):
     return weight
 
 
-dem_in = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/connectivity/poverty/dem.tif'
+dem_in = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/burnt_fork/connectivity/dem.tif'
 weight_raster(dem_in)
