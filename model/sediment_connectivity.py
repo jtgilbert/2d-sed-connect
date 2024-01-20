@@ -228,7 +228,8 @@ def hillslope_connectivity(network_raster, filled_dem, flow_acc, flow_dir, slope
     return hs_connectivity
 
 
-def channel_connectivity(reaches, gsds, id_field, reachids, upstream_id, hydrograph, q_interval, flow_scale_field, depth_hydro_geom, width_hydro_geom, min_fr = None, min_fr_us = None):
+def channel_connectivity(reaches, gsds, id_field, reachids, upstream_id, hydrograph, q_interval, flow_scale_field,
+                         depth_hydro_geom, width_hydro_geom, meas_slope, min_fr = None, min_fr_us = None):
 
     # reaches must have topological identifiers from network tools that match keys in the gsd dict
     # reaches must also be prepared with slope and upstream-downstream topology fields, width?
@@ -245,6 +246,7 @@ def channel_connectivity(reaches, gsds, id_field, reachids, upstream_id, hydrogr
 
     for i in network.index:
         reach_id = network.loc[i, id_field]
+        slope = network.loc[i, 'Slope']
         if reach_id not in reachids:
             continue
         d50 = gsd[str(i)]['d50']/1000
@@ -255,7 +257,7 @@ def channel_connectivity(reaches, gsds, id_field, reachids, upstream_id, hydrogr
             us_reach_id = network.loc[i, upstream_id[0]]
             us_reach_id2 = network.loc[i, upstream_id[1]]
             q = discharge * network.loc[i, flow_scale_field]
-            depth = depth_hydro_geom[0] * q ** depth_hydro_geom[1]
+            depth = (depth_hydro_geom[0] * q ** depth_hydro_geom[1]) * (meas_slope / slope)**0.75
             width = width_hydro_geom[0] * q ** width_hydro_geom[1]
             fractions_tmp = {float(key): val['fraction'] for key, val in gsd[str(i)]['fractions'].items()}
             if min_fr is not None:
@@ -273,8 +275,9 @@ def channel_connectivity(reaches, gsds, id_field, reachids, upstream_id, hydrogr
                     if network.loc[j, id_field] == us_reach_id:
                         d50_us = gsd[str(j)]['d50']/1000
                         d84_us = gsd[str(j)]['d84']/1000
+                        slope_us = network.loc[j, 'Slope']
                         q_us = discharge * network.loc[j, flow_scale_field]
-                        depth_us = depth_hydro_geom[0] * q ** depth_hydro_geom[1]
+                        depth_us = (depth_hydro_geom[0] * q ** depth_hydro_geom[1]) * (meas_slope / slope_us) ** 0.75
                         width_us = width_hydro_geom[0] * q ** width_hydro_geom[1]
                         fractions_us_tmp = {float(key): val['fraction'] for key, val in gsd[str(j)]['fractions'].items()}
                         if min_fr_us is not None:
@@ -291,8 +294,9 @@ def channel_connectivity(reaches, gsds, id_field, reachids, upstream_id, hydrogr
                     if network.loc[k, id_field] == us_reach_id2:
                         d50_us2 = gsd[str(k)]['d50']/1000
                         d84_us2 = gsd[str(k)]['d84']/1000
+                        slope_us2 = network.loc[k, 'Slope']
                         q_us2 = discharge * network.loc[k, flow_scale_field]
-                        depth_us2 = depth_hydro_geom[0] * q ** depth_hydro_geom[1]
+                        depth_us2 = (depth_hydro_geom[0] * q ** depth_hydro_geom[1]) * (meas_slope / slope_us2) ** 0.75
                         width_us2 = width_hydro_geom[0] * q ** width_hydro_geom[1]
                         fractions_us2_tmp = {float(key): val['fraction'] for key, val in gsd[str(k)]['fractions'].items()}
                         if min_fr_us is not None:
@@ -500,20 +504,76 @@ def recking_channel_connectivity(reaches, id_field, reachids, upstream_id, hydro
 # hc = hillslope_connectivity(nr, filled, fa, fd, sl, we)
 # print(hc)
 
-reaches_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/Blodgett_network_100m.shp'
-gsds_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/gsd_blodgett.json'
+reaches_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/Woods_network.shp'
+gsds_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/gsd_woods2.json'
 id_field_in = 'rid'
-reachids_in = [1.053]
+reachids_in = [8.039999999999999, 1.053, 1.055, 1.066, 1.091, 1.143]
 upstream_id_in = ['rid_us', 'rid_us2']
-discharge_in = '/media/jordan/Elements/Geoscience/Bitterroot/Blodgett/flow_2021/blodgett_q_15.csv'
+discharge_in = '/media/jordan/Elements/Geoscience/Bitterroot/Woods/flow_2021/Woods_daily_q.csv'
 flow_scale_field_in = 'flow_scale'
-dhg = [0.299, 0.215]
-whg = [6.504, 0.348]
+dhg = [0.282, 0.406]
+whg = [4.688, 0.281]
 
-# sdr = channel_connectivity(reaches_in, gsds_in, id_field_in, reachids_in, upstream_id_in, discharge_in, 1800, flow_scale_field_in, dhg, whg)
-# print(sdr)
+sdr = channel_connectivity(reaches_in, gsds_in, id_field_in, reachids_in, upstream_id_in, discharge_in, 86400, flow_scale_field_in, dhg, whg, 0.016)
+print(sdr)
 
 # sdr = recking_channel_connectivity(reaches_in, id_field_in, reachids_in, upstream_id_in, discharge_in, 1800, flow_scale_field_in, whg)
 # print(sdr)
 
-network_sdr(reaches_in, gsds_in, id_field_in, upstream_id_in, discharge_in, 1800, flow_scale_field_in, dhg, whg, min_fr=0.005)
+# network_sdr(reaches_in, gsds_in, id_field_in, upstream_id_in, discharge_in, 1800, flow_scale_field_in, dhg, whg, min_fr=0.005)
+
+
+# Blodgett sdr params
+# reaches_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/Blodgett_network.shp'
+# gsds_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/gsd_blodgett2.json'
+# id_field_in = 'rid'
+# reachids_in = [1.212, 1.216, 1.221, 1.247]
+# upstream_id_in = ['rid_us', 'rid_us2']
+# discharge_in = '/media/jordan/Elements/Geoscience/Bitterroot/Blodgett/flow_2021/Blodgett_daily_q.csv'
+# flow_scale_field_in = 'flow_scale'
+# dhg = [0.299, 0.215]
+# whg = [8.542, 0.227]
+
+# burnt fork sdr params
+# reaches_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/Burnt_Fork_network.shp'
+# gsds_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/gsd_burnt_fork2.json'
+# id_field_in = 'rid'
+# reachids_in = [1.097]
+# upstream_id_in = ['rid_us', 'rid_us2']
+# discharge_in = '/media/jordan/Elements/Geoscience/Bitterroot/Burnt_Fork/BF_flow/BF_daily_q.csv'
+# flow_scale_field_in = 'flow_scale'
+# dhg = [0.255, 0.416]
+# whg = [4.058, 0.307]
+
+# lost horse sdr params
+# reaches_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/Lost_Horse_network.shp'
+# gsds_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/gsd_lost_horse2.json'
+# id_field_in = 'rid'
+# reachids_in = [1.022, 1.13]
+# upstream_id_in = ['rid_us', 'rid_us2']
+# discharge_in = '/media/jordan/Elements/Geoscience/Bitterroot/Lost_Horse/LH_flow/LH_daily_q.csv'
+# flow_scale_field_in = 'flow_scale'
+# dhg = [0.234, 0.411]
+# whg = [4.695, 0.318]
+
+# roaring lion sdr params
+# reaches_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/Roaring_Lion_network.shp'
+# gsds_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/gsd_roaring_lion2.json'
+# id_field_in = 'rid'
+# reachids_in = [1.105]
+# upstream_id_in = ['rid_us', 'rid_us2']
+# discharge_in = '/media/jordan/Elements/Geoscience/Bitterroot/Roaring_Lion/RL_flow/RL_daily_q.csv'
+# flow_scale_field_in = 'flow_scale'
+# dhg = [0.227, 0.387]
+# whg = [5.213, 0.324]
+
+# sleeping child sdr params
+# reaches_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/Sleeping_Child_network.shp'
+# gsds_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/gsd_sleeping_child2.json'
+# id_field_in = 'rid'
+# reachids_in = [1.114, 1.128, 1.168]
+# upstream_id_in = ['rid_us', 'rid_us2']
+# discharge_in = '/media/jordan/Elements/Geoscience/Bitterroot/Sleeping_Child/sc_flow/SC_daily_q.csv'
+# flow_scale_field_in = 'flow_scale'
+# dhg = [0.23, 0.343]
+# whg = [5.072, 0.377]

@@ -7,7 +7,7 @@ from dsp_transport.calculate_transport import transport
 
 
 def network_sdr(reaches, gsds, id_field, upstream_id, hydrograph, q_interval, flow_scale_field, depth_hydro_geom,
-                width_hydro_geom, min_fr=None, ud_gsd=False, dist_reach=None, dist_vol=None, dist_gsd=None):
+                width_hydro_geom, meas_slope, min_fr=None, ud_gsd=False, dist_reach=None, dist_vol=None, dist_gsd=None):
 
     # reaches must have topological identifiers from network tools that match keys in the gsd dict
     # reaches must also be prepared with slope and upstream-downstream topology fields, width?
@@ -53,7 +53,7 @@ def network_sdr(reaches, gsds, id_field, upstream_id, hydrograph, q_interval, fl
             reach_id = network.loc[i, id_field]
 
             q = discharge * network.loc[i, flow_scale_field]
-            depth = (depth_hydro_geom[0] * q ** depth_hydro_geom[1]) * (0.011 / network.loc[i, 'Slope'])**0.75  # correction for steeper or less steep channels... based on relationship from Mannings
+            depth = (depth_hydro_geom[0] * q ** depth_hydro_geom[1]) * (meas_slope / network.loc[i, 'Slope'])**0.75  # correction for steeper or less steep channels... based on relationship from Mannings
             width = width_hydro_geom[0] * q ** width_hydro_geom[1]
             if i in reach_gsds.keys():
                 fractions_tmp = reach_gsds[i]
@@ -67,7 +67,7 @@ def network_sdr(reaches, gsds, id_field, upstream_id, hydrograph, q_interval, fl
                     fractions = fractions_tmp
             else:
                 fractions = fractions_tmp
-            # if reach_id == 5.12:
+            # if reach_id == 8.17 and discharge > 2:
             #     print('checking')
             qs = transport(fractions, max(network.loc[i, 'Slope'], 0.0001), q, depth, width, q_interval, d50_in=d50, d84_in=d84)
             qs_kg = {key: val[1] for key, val in qs.items()}
@@ -131,8 +131,8 @@ def network_sdr(reaches, gsds, id_field, upstream_id, hydrograph, q_interval, fl
         network.loc[i, 'sp_yield'] = (reach_yield/1000) / network.loc[i, 'Drain_Area']
 
     network.to_file(reaches)
-    with open('/media/jordan/Elements/Geoscience/Bitterroot/Blodgett/flow_2021/reach_yield.json', 'w') as f:
-        json.dump(sedyields, f, indent=4)
+    # with open('/media/jordan/Elements/Geoscience/Bitterroot/Blodgett/flow_2021/reach_yield.json', 'w') as f:
+    #     json.dump(sedyields, f, indent=4)
 
     return
 
@@ -198,15 +198,15 @@ def sdr_notransport(network_in):
 
 
 
-reaches_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/Blodgett_network.shp'
-gsds_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/gsd_blodgett2.json'
+reaches_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/Woods_network.shp'
+gsds_in = '/home/jordan/Documents/Geoscience/grain-size/Input_data/gsd_woods2.json'
 id_field_in = 'rid'
-reachids_in = [1.053]
+reachids_in = [8.039999999999999, 1.053, 1.055, 1.066, 1.091, 1.143]
 upstream_id_in = ['rid_us', 'rid_us2']
-discharge_in = '/media/jordan/Elements/Geoscience/Bitterroot/Blodgett/flow_2021/Blodgett_daily_q.csv'
+discharge_in = '/media/jordan/Elements/Geoscience/Bitterroot/Woods/flow_2021/Woods_daily_q.csv'
 flow_scale_field_in = 'flow_scale'
-dhg = [0.299, 0.215]
-whg = [8.542, 0.227]
+dhg = [0.282, 0.406]
+whg = [4.688, 0.281]
 
 disturbance_gsd = {
     1.: 0.01,
@@ -230,6 +230,6 @@ disturbance_gsd = {
 }
 
 network_sdr(reaches_in, gsds_in, id_field_in, upstream_id_in, discharge_in, 86400, flow_scale_field_in,
-            dhg, whg, min_fr=0.005)  #, ud_gsd=True, dist_reach=1.234, dist_vol=930, dist_gsd=disturbance_gsd)
+            dhg, whg, 0.016,  min_fr=0.005)  #, ud_gsd=True, dist_reach=1.234, dist_vol=930, dist_gsd=disturbance_gsd)
 
 # sdr_notransport(reaches_in)
