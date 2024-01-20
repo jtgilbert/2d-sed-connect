@@ -7,7 +7,7 @@ from math import tan, atan, pi, sin, cos, exp
 
 def rockfall(dem_in, slope_in, dest_raster, slope_thresh, divergence, persistence, mu_s):
 
-    max_slope = 60 * pi / 180  # fixed rn
+    max_slope = 50 * pi / 180  # fixed rn
     slope_thresh = slope_thresh * pi / 180
 
     with rasterio.open(dem_in) as dem_src:
@@ -36,10 +36,10 @@ def rockfall(dem_in, slope_in, dest_raster, slope_thresh, divergence, persistenc
 
     for r in tqdm(range(1, dem_array.shape[0]-1)):
         for c in range(1, dem_array.shape[1]-1):
-            if slope_array[r, c] >= 60:
+            if slope_array[r, c] >= 50:
                 print(f'generating rockfall at cell {[r, c]}')
                 iter = 1
-                while iter <= 10:
+                while iter <= 5:
                     rf_array[r, c] = 0  # set source nodes to 0
 
                     # random walk to next cell
@@ -55,16 +55,22 @@ def rockfall(dem_in, slope_in, dest_raster, slope_thresh, divergence, persistenc
                             iter += 1
                             break
 
-                        slopes = {
-                            1: (dem_array[row,col]-dem_array[row+1,col-1])/dist_diag if dem_array[row+1,col-1] != nd else 0,
-                            2: (dem_array[row,col]-dem_array[row+1,col])/dist_str if dem_array[row+1,col] != nd else 0,
-                            3: (dem_array[row,col]-dem_array[row+1,col+1])/dist_diag if dem_array[row+1,col+1] != nd else 0,
-                            4: (dem_array[row,col]-dem_array[row,col-1])/dist_str if dem_array[row,col-1] != nd else 0,
-                            5: (dem_array[row,col]-dem_array[row,col+1])/dist_str if dem_array[row,col+1] != nd else 0,
-                            6: (dem_array[row,col]-dem_array[row-1,col-1])/dist_diag if dem_array[row-1,col-1] != nd else 0,
-                            7: (dem_array[row,col]-dem_array[row-1,col])/dist_str if dem_array[row-1,col] != nd else 0,
-                            8: (dem_array[row,col]-dem_array[row-1,col+1])/dist_diag if dem_array[row-1,col+1] != nd else 0
-                        }
+                        try:
+                            slopes = {
+                                1: (dem_array[row,col]-dem_array[row+1,col-1])/dist_diag if dem_array[row+1,col-1] != nd else 0,
+                                2: (dem_array[row,col]-dem_array[row+1,col])/dist_str if dem_array[row+1,col] != nd else 0,
+                                3: (dem_array[row,col]-dem_array[row+1,col+1])/dist_diag if dem_array[row+1,col+1] != nd else 0,
+                                4: (dem_array[row,col]-dem_array[row,col-1])/dist_str if dem_array[row,col-1] != nd else 0,
+                                5: (dem_array[row,col]-dem_array[row,col+1])/dist_str if dem_array[row,col+1] != nd else 0,
+                                6: (dem_array[row,col]-dem_array[row-1,col-1])/dist_diag if dem_array[row-1,col-1] != nd else 0,
+                                7: (dem_array[row,col]-dem_array[row-1,col])/dist_str if dem_array[row-1,col] != nd else 0,
+                                8: (dem_array[row,col]-dem_array[row-1,col+1])/dist_diag if dem_array[row-1,col+1] != nd else 0
+                            }
+                        except Exception as ex:
+                            print(ex)
+                            print('rockfall path exiting raster extents')
+                            break
+
                         if max(slopes.values()) <= 0:
                             iter += 1
                             break
@@ -197,7 +203,7 @@ def df_source_cells(slope_array, da_array, fd_array, fd_nodata, chan_array):
         for col in range(slope_array.shape[1]):
             if tan(slope_array[row, col]*180/pi) * 100 > 0:
                 crit_da = 4.3 * (tan(slope_array[row, col]*pi/180) * 100) ** -1.3
-                if da_array[row, col] / 1000000 > crit_da and chan_array[row, col] != 1:
+                if da_array[row, col] > crit_da and chan_array[row, col] != 1:
                     source_array[row, col] = 1
 
     # filter out cells downstream of other cells
@@ -294,7 +300,8 @@ def debris_flow(dem_in, slope_in, fd_in, da_in, chan_in, slope_thresh, divergenc
             if source_cells[r, c] == 1:
                 print(f'generating debris flow at {[r, c]}')
                 iter = 1
-                while iter <= 10:
+                while iter <= 3:
+                    processed = [[r, c]]
                     df_arr[r, c] = 1
 
                     # random walk to next cell
@@ -302,7 +309,7 @@ def debris_flow(dem_in, slope_in, fd_in, da_in, chan_in, slope_thresh, divergenc
                     prev_flow_dir = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0}
                     row, col = r, c
                     while velocity > 0:
-                        if dem_arr[row, col] == nd:
+                        if dem_arr[row, col] == nd or fd_arr[row, col] == fd_nd:
                             velocity = 0
                             iter = 10
                             break
@@ -361,7 +368,7 @@ def debris_flow(dem_in, slope_in, fd_in, da_in, chan_in, slope_thresh, divergenc
                         area = {1: da_arr[new_row_col[1][0], new_row_col[1][1]], 2: da_arr[new_row_col[2][0], new_row_col[2][1]], 3: da_arr[new_row_col[3][0], new_row_col[3][1]],
                                          4: da_arr[new_row_col[4][0], new_row_col[4][1]], 5: da_arr[row, col], 6: da_arr[new_row_col[5][0], new_row_col[5][1]],
                                          7: da_arr[new_row_col[6][0], new_row_col[6][1]], 8: da_arr[new_row_col[7][0], new_row_col[7][1]], 9: da_arr[new_row_col[8][0], new_row_col[8][1]]}
-                        mu_i = 0.13 * max(area.values())**-0.25
+                        mu_i = 0.13 * (max(area.values())*1000000)**-0.4
                         #mu_i = 1e-10
                         s_percent = slopes[direction]
                         s_rad = atan(s_percent)
@@ -372,9 +379,14 @@ def debris_flow(dem_in, slope_in, fd_in, da_in, chan_in, slope_thresh, divergenc
 
                         velocity = v_i
                         prev_flow_dir = {key: 0 if key != direction else 1 for key in p_i.keys()}
+                        processed.append([row, col])
                         row = new_row_col[direction][0]
                         col = new_row_col[direction][1]
                         df_arr[row, col] = 1
+                        if [row, col] in processed:
+                            iter = 5
+                            velocity = 0
+                            break
 
                         if chan_arr[row, col] == 1:
                             velocity = 0
@@ -385,15 +397,63 @@ def debris_flow(dem_in, slope_in, fd_in, da_in, chan_in, slope_thresh, divergenc
         dst.write(df_arr, 1)
 
 
-# dem = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_lower/dem_sub.tif'
-# slope = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_lower/slope_sub.tif'
-# sed_dest = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/connectivity/channel_lower/sed_dest.tif'
-# rockfall(dem, slope, sed_dest, 30, 5, 3, 0.8)
+def hsca(thresh_slope, flow_dir, destinations):
 
-dem = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/connectivity/df1/pitfill.tif'
-slope = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/connectivity/df1/slope_deg.tif'
-fd = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/connectivity/df1/flow_dir.tif'
-da = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/connectivity/df1/flow_acc.tif'
-chan = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/connectivity/df1/network.tif'
+    with rasterio.open(thresh_slope) as src, rasterio.open(flow_dir) as fd_src, rasterio.open(destinations) as dest_src:
+        profile = src.profile
+        nd = src.nodata
+        slope_arr = src.read()[0, :, :]
+        hsca_array = np.full(slope_arr.shape, nd)
+        fd_arr = fd_src.read()[0, :, :]
+        fd_nd = fd_src.nodata
+        dest_arr = dest_src.read()[0, :, :]
+        dest_nd = dest_src.nodata
 
-debris_flow(dem, slope, fd, da, chan, 20, 1.3, 1.5, 75)
+    processed = []
+    for row in tqdm(range(1, slope_arr.shape[0]-1)):
+        for col in range(1, slope_arr.shape[1]-1):
+            if slope_arr[row, col] == 1:
+                subprocessed = []
+                subprocessed.append([row, col])
+                next_r, next_c = next_row_col(fd_arr[row, col], row, col, subprocessed)
+                try:
+                    while slope_arr[next_r, next_c] == 1 and dest_arr[next_r, next_c] == dest_nd and fd_arr[next_r, next_c] != fd_nd:
+                        if [next_r, next_c] not in processed:
+                            subprocessed.append([next_r, next_c])
+                            next_r, next_c = next_row_col(fd_arr[next_r, next_c], next_r, next_c, subprocessed)
+                        else:
+                            break
+                    if dest_arr[next_r, next_c] == 1 or hsca_array[next_r, next_c] == 1:
+                        for coords in subprocessed:
+                            hsca_array[coords[0], coords[1]] = 1
+                    else:
+                        for coords in subprocessed:
+                            hsca_array[coords[0], coords[1]] = 0
+                    for coords in subprocessed:
+                        processed.append(coords)
+                except Exception as ex:
+                    print(ex)
+                    continue
+
+    with rasterio.open(os.path.join(os.path.dirname(thresh_slope), 'hsca.tif'), 'w', **profile) as dst:
+        dst.write(hsca_array, 1)
+
+
+
+dem = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/Blodgett_DEM_10m.tif'
+slope = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/slope_10m.tif'
+sed_dest = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/sed_dest_10m.tif'
+rockfall(dem, slope, sed_dest, 40, 5, 3, 0.7)
+
+# dem = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/Sleeping_Child_DEM_10m.tif'
+# slope = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/slope_10m.tif'
+# fd = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/flow_dir_10m.tif'
+# da = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/dr_area_10m.tif'
+# chan = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/network_10m.tif'
+#
+# debris_flow(dem, slope, fd, da, chan, 20, 1.3, 1.5, 75)
+
+# thresholded_slope = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/thresh_slope.tif'
+# flow_direction = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/flow_dir_10m.tif'
+# destination_raster = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/network_10m.tif'
+# hsca(thresholded_slope, flow_direction, destination_raster)
