@@ -1,3 +1,4 @@
+import json
 import os
 import rasterio
 import numpy as np
@@ -439,21 +440,83 @@ def hsca(thresh_slope, flow_dir, destinations):
         dst.write(hsca_array, 1)
 
 
+def hs_channel_connectivity(connected_slopes, flow_dir, channel):
+    out_vals = {}
+    out_area = {}
+    with rasterio.open(connected_slopes) as src, rasterio.open(flow_dir) as fd_src, rasterio.open(channel) as dest_src:
+        profile = src.profile
+        xres = src.transform[0]
+        yres = src.transform[4]
+        nd = src.nodata
+        slope_arr = src.read()[0, :, :]
+        out_array = np.full(slope_arr.shape, nd)
+        fd_arr = fd_src.read()[0, :, :]
+        fd_nd = fd_src.nodata
+        dest_arr = dest_src.read()[0, :, :]
+        dest_nd = dest_src.nodata
 
-dem = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/Blodgett_DEM_10m.tif'
-slope = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/slope_10m.tif'
-sed_dest = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/sed_dest_10m.tif'
-rockfall(dem, slope, sed_dest, 40, 5, 3, 0.7)
+    processed = []
+    for row in tqdm(range(1, slope_arr.shape[0]-1)):
+        for col in range(1, slope_arr.shape[1]-1):
+            if slope_arr[row, col] == 1 and dest_arr[row, col] == dest_nd:
+                subprocessed = []
+                subprocessed.append([row, col])
+                next_r, next_c = next_row_col(fd_arr[row, col], row, col, subprocessed)
+                try:
+                    while dest_arr[next_r, next_c] == dest_nd and fd_arr[next_r, next_c] != fd_nd and out_array[next_r, next_c] == nd:
+                        if [next_r, next_c] not in processed:
+                            subprocessed.append([next_r, next_c])
+                            next_r, next_c = next_row_col(fd_arr[next_r, next_c], next_r, next_c, subprocessed)
+                        else:
+                            break
+                    if dest_arr[next_r, next_c] != dest_nd or out_array[next_r, next_c] != nd:
+                        assign_val = max(dest_arr[next_r, next_c], out_array[next_r, next_c])
+                        for coords in subprocessed:
+                            out_array[coords[0], coords[1]] = assign_val
+                        if assign_val not in out_vals.keys():
+                            out_vals[assign_val] = len(subprocessed)
+                        else:
+                            out_vals[assign_val] += len(subprocessed)
+                    else:
+                        for coords in subprocessed:
+                            out_array[coords[0], coords[1]] = 0
+                    for coords in subprocessed:
+                        processed.append(coords)
+                except Exception as ex:
+                    print(ex)
+                    continue
 
-# dem = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/Sleeping_Child_DEM_10m.tif'
-# slope = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/slope_10m.tif'
-# fd = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/flow_dir_10m.tif'
-# da = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/dr_area_10m.tif'
-# chan = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/sleeping_child/network_10m.tif'
+    for key, val in out_vals.items():
+        if key is not None:
+            out_area[str(int(key))] = val * abs(xres) * abs(yres)
+
+    with rasterio.open(os.path.join(os.path.dirname(connected_slopes), 'hillslope_conn.tif'), 'w', **profile) as dst:
+        dst.write(out_array, 1)
+
+    with open(os.path.join(os.path.dirname(connected_slopes), 'connected_areas.json'), 'w') as jsondst:
+        json.dump(out_area, jsondst, indent=2)
+
+
+
+# dem = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/Lost_Horse_DEM_10m.tif'
+# slope = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/slope_10m.tif'
+# sed_dest = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/lost_horse/sed_dest_10m.tif'
+# rockfall(dem, slope, sed_dest, 40, 5, 3, 0.7)
+
+# dem = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/roaring_lion/Roaring_Lion_DEM_10m.tif'
+# slope = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/roaring_lion/slope_10m.tif'
+# fd = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/roaring_lion/flow_dir_10m.tif'
+# da = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/roaring_lion/dr_area_10m.tif'
+# chan = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/roaring_lion/network_10m.tif'
 #
 # debris_flow(dem, slope, fd, da, chan, 20, 1.3, 1.5, 75)
 
-# thresholded_slope = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/thresh_slope.tif'
-# flow_direction = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/flow_dir_10m.tif'
-# destination_raster = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/blodgett/network_10m.tif'
+# thresholded_slope = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/burnt_fork/thresh_slope.tif'
+# flow_direction = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/burnt_fork/flow_dir_10m.tif'
+# destination_raster = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/burnt_fork/dest_raster.tif'
 # hsca(thresholded_slope, flow_direction, destination_raster)
+
+connected_slope = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/woods/connected_hillslopes.tif'
+flow_direction = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/woods/flow_dir_10m.tif'
+stream_raster = '/media/jordan/Elements/Geoscience/Bitterroot/lidar/woods/network_id.tif'
+hs_channel_connectivity(connected_slope, flow_direction, stream_raster)
